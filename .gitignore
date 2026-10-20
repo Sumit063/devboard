@@ -1,0 +1,10 @@
+# Build output
+build/
+*.app
+
+# Personal settings: these live in ~/.config/devboard, never in the repo
+gemini_key
+profile.txt
+config.json
+
+.DS_Store

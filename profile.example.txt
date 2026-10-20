@@ -1,0 +1,13 @@
+Backend engineer, 4 years of experience.
+
+A ride-sharing company: Senior Software Engineer, dispatch
+- Built a Go + Kafka dispatch service matching 40k rides/minute with geo-sharded Redis.
+- Cut p99 match latency from 900ms to 120ms by moving surge pricing to an async gRPC pipeline.
+- Migrated MySQL to a distributed SQL database with zero downtime using dual writes and CDC backfill.
+
+A large bank: Software Engineer
+- Wrote Java/Spring payment reconciliation jobs processing 3M transactions nightly on Postgres.
+
+Side projects: an HTTP server in C with epoll; a Raft key-value store in Java.
+
+Skills: Go, Java, Python, Kafka, Redis, Postgres, Kubernetes, AWS, Prometheus.
