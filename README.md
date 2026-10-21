@@ -9,7 +9,7 @@ Your LeetCode and GitHub streaks, a daily LeetCode problem, AI-written interview
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
 ![Swift](https://img.shields.io/badge/Swift-WidgetKit%20%2B%20SwiftUI-F05138?logo=swift&logoColor=white)
 ![No Xcode](https://img.shields.io/badge/Xcode-not%20required-blue)
-![Gemini free tier](https://img.shields.io/badge/AI-Gemini%20free%20tier-8E75B2?logo=googlegemini&logoColor=white)
+![AI: Gemini, Claude or OpenAI-compatible](https://img.shields.io/badge/AI-Gemini%20%7C%20Claude%20%7C%20OpenAI--compatible-8E75B2)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
 <img src="docs/screenshots/stack-dark.png" width="400" alt="DevBoard widgets stacked in Notification Center (dark)">
@@ -56,7 +56,12 @@ cd devboard
 `setup.sh` asks for:
 
 1. **Your LeetCode and GitHub usernames** (either can be left blank).
-2. **A free Gemini API key** (optional, recommended). Get one in a minute at [aistudio.google.com/apikey](https://aistudio.google.com/apikey); no card needed. Without it, everything except the AI questions still works.
+2. **An AI provider and API key** (optional, recommended). Pick one:
+   - **Gemini**: free, no card. Get a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+   - **Claude**: get a key at [console.anthropic.com](https://console.anthropic.com/settings/keys). Uses `claude-opus-5-5` by default.
+   - **OpenAI-compatible**: any API that speaks OpenAI's Chat Completions: OpenAI, OpenRouter, Groq, Together, or a local Ollama / LM Studio (`http://localhost:11434/v1`). You choose the base URL and model.
+
+   Without a key, everything except the AI questions still works.
 3. **Your resume** (optional): a PDF, DOCX, TXT, Markdown or LaTeX file. See [Resume handoff](#resume-handoff).
 
 It then builds the app and installs it to `~/Applications/DevBoard.app`.
@@ -74,13 +79,13 @@ How it works, with privacy first:
 
 1. `setup.sh` extracts the text **on your Mac** (PDFKit / `textutil`, nothing installed).
 2. Emails, phone numbers and links are **scrubbed locally** before anything leaves your machine.
-3. Gemini rewrites the rest into a ~300-word tech profile **with no name, employers, schools or locations**. Companies become "a large fintech company" and so on.
+3. Your AI provider rewrites the rest into a ~300-word tech profile **with no name, employers, schools or locations**. Companies become "a large fintech company" and so on.
 4. You **review the profile** and save, edit or discard it. It is stored only at `~/.config/devboard/profile.txt`.
 5. Each day, one question slot (rotating OS → Networks → DBMS → Infra → System design) is written from that profile. It's tagged **From your resume**, and its note title starts with `[RESUME]`.
 
 Prefer not to send your resume anywhere? Copy [`profile.example.txt`](profile.example.txt) to `~/.config/devboard/profile.txt`, write your own summary, and run `./build.sh`.
 
-> Gemini's free tier may use prompts to improve Google's products. That's why only the anonymized profile is ever used for questions.
+> Some providers' free tiers (Gemini's included) may use prompts to improve their products. That's why only the anonymized profile is ever used for questions.
 
 ## Configuration
 
@@ -89,7 +94,7 @@ Everything personal lives in `~/.config/devboard/` (permissions `600`), never in
 | File | Purpose |
 |---|---|
 | `config.json` | Usernames and options (see [`config.example.json`](config.example.json)) |
-| `gemini_key` | Your Gemini API key |
+| `api_key` | Your Gemini, Claude or OpenAI-compatible API key |
 | `profile.txt` | Your anonymized resume profile |
 
 ```json
@@ -97,9 +102,16 @@ Everything personal lives in `~/.config/devboard/` (permissions `600`), never in
   "leetcode_username": "your-leetcode-username",
   "github_username": "your-github-username",
   "notes_folder": "Daily Problems",
-  "resume_questions": true
+  "resume_questions": true,
+  "ai_provider": "gemini",
+  "ai_model": "",
+  "ai_base_url": ""
 }
 ```
+
+- `ai_provider`: `gemini` (default), `claude`, or `openai` (any OpenAI-compatible API).
+- `ai_model`: overrides the default model. Required for `openai`.
+- `ai_base_url`: only for `openai`; defaults to `https://api.openai.com/v1`.
 
 After editing any of these, run `./build.sh`. The widget is sandboxed, so settings are copied into the app bundle at build time. Or just run `./setup.sh` again.
 
@@ -111,7 +123,7 @@ Notification Center ─▶ DevBoardWidget.appex (sandboxed, hourly timeline)
                          ├─ GitHub contributions .... heatmap (public page, no token)
                          ├─ build-your-own-x ........ daily project idea (cached 24h)
                          ├─ GitHub search ........... fresh repos for the day's domain
-                         └─ Gemini (1 call/day) ..... 5 questions + hints, cached for the day
+                         └─ AI provider (1 call/day)  5 questions + hints, cached for the day
             clicks ─▶ DevBoard.app (tiny helper, quits when done)
                          ├─ opens links in your browser
                          ├─ hints page (SwiftUI)
@@ -119,7 +131,7 @@ Notification Center ─▶ DevBoardWidget.appex (sandboxed, hourly timeline)
 ```
 
 - **Refresh:** hourly and just after midnight; the **Refresh** button forces it. All widgets share one fetch.
-- **Questions:** each subject rotates through ~35 subtopics so days don't repeat. Gemini writes the question, scenario and hints. `gemini-2.5-flash` is used first (about 5 seconds), and overloaded models fall back automatically.
+- **Questions:** each subject rotates through ~35 subtopics so days don't repeat. The AI provider writes the question, scenario and hints. On Gemini, `gemini-3.8-flash` is used first and overloaded models fall back automatically.
 - **Resilient:** any source that fails keeps its last good data; failed question generation retries every 10 minutes.
 
 Project layout:
@@ -127,7 +139,7 @@ Project layout:
 ```
 App/        helper app: link routing, hints page, Notes
 Widget/     the four widgets (SwiftUI + WidgetKit)
-Shared/     models, fetchers, Gemini question generator
+Shared/     models, fetchers, AI question generator
 scripts/    resume → profile (text extraction + anonymization)
 Support/    Info.plists, entitlements
 Tools/      screenshot renderer for this README
@@ -147,8 +159,8 @@ Tools/      screenshot renderer for this README
 |---|---|
 | DevBoard isn't in Edit Widgets | Run `./build.sh` again, then close and reopen Edit Widgets. If it's still missing, run `killall chronod` and try once more. |
 | "Set username in config.json" | Run `./setup.sh` and enter your usernames. |
-| Questions say "Add a free Gemini API key" | Run `./setup.sh` and paste a key from [AI Studio](https://aistudio.google.com/apikey). |
-| Questions stuck on "Generating…" | Gemini's free tier is sometimes overloaded; it retries every 10 minutes. Logs: `log show --last 30m --info --predicate 'subsystem == "dev.devboard"'` |
+| Questions say "Add an AI API key" | Run `./setup.sh`, pick a provider and paste its key. |
+| Questions stuck on "Generating…" | The provider may be overloaded or out of quota (Gemini's free tier often is); it retries every 10 minutes. Switching provider in `./setup.sh` also works. Logs: `log show --last 30m --info --predicate 'subsystem == "dev.devboard"'` |
 | Notes doesn't open | System Settings → Privacy & Security → Automation → enable Notes for DevBoard. Rebuilding may ask again. |
 | Clicking does nothing | Only titles marked ↗ are links; the rest is intentionally inert. |
 
@@ -170,7 +182,7 @@ more subtopics, Codeforces/HackerRank heatmaps, more build-idea sources, localiz
 
 - Project ideas from [codecrafters-io/build-your-own-x](https://github.com/codecrafters-io/build-your-own-x)
 - Brand icons from [Simple Icons](https://simpleicons.org) (CC0)
-- Questions written by [Google Gemini](https://ai.google.dev) on its free tier
+- Questions written by [Google Gemini](https://ai.google.dev), [Anthropic Claude](https://www.anthropic.com/api) or any OpenAI-compatible model
 - LeetCode data comes from LeetCode's public, unofficial GraphQL endpoint. DevBoard isn't affiliated with LeetCode, GitHub or Google.
 
 ## License

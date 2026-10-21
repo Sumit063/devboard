@@ -13,7 +13,7 @@ killall chronod 2>/dev/null || true
 
 if [[ ${1:-} == --all ]]; then
   rm -rf ~/.config/devboard
-  echo "✓ Removed ~/.config/devboard (config, Gemini key, profile)"
+  echo "✓ Removed ~/.config/devboard (config, API key, profile)"
 else
   echo "Settings kept in ~/.config/devboard (run ./uninstall.sh --all to delete them too)."
 fi

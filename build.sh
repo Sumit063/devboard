@@ -5,7 +5,7 @@
 # Your settings live in ~/.config/devboard/ (created by ./setup.sh) and are copied into the bundle,
 # because the sandboxed widget can only read files inside its own bundle:
 #   config.json   usernames and options
-#   gemini_key    free Gemini API key (optional; enables the AI-written questions)
+#   api_key       Gemini, Claude or OpenAI-compatible API key (optional; enables the AI-written questions)
 #   profile.txt   anonymized resume profile (optional; enables resume-based questions)
 #
 # Override the bundle identifier with BUNDLE_ID=com.example.devboard ./build.sh
@@ -17,11 +17,14 @@ BUNDLE_ID=${BUNDLE_ID:-dev.devboard}
 MIN_MACOS=14.0
 SDK=$(xcrun --show-sdk-path)
 TARGET="$(uname -m)-apple-macos$MIN_MACOS"
-OUT=build/DevBoard.app
+# Build outside the repo: iCloud-synced folders (Desktop/Documents) tag .app bundles with
+# Finder metadata, which codesign rejects ("resource fork, Finder information... not allowed").
+BUILD=${TMPDIR:-/tmp}/devboard-build
+OUT=$BUILD/DevBoard.app
 APPEX=$OUT/Contents/PlugIns/DevBoardWidget.appex
 FLAGS=(-sdk "$SDK" -target "$TARGET" -swift-version 5 -O -parse-as-library)
 
-rm -rf build && mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources" "$APPEX/Contents/MacOS" "$APPEX/Contents/Resources"
+rm -rf "$BUILD" && mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources" "$APPEX/Contents/MacOS" "$APPEX/Contents/Resources"
 
 echo "→ Compiling widget extension"
 # Widget extensions must start at _NSExtensionMain (Xcode adds this flag for extension targets).
@@ -49,10 +52,12 @@ if [[ -s $CONFIG_DIR/config.json ]]; then
 else
   echo "⚠︎ No $CONFIG_DIR/config.json yet. Run ./setup.sh to add your usernames."
 fi
-if [[ -s $CONFIG_DIR/gemini_key ]]; then
-  cp "$CONFIG_DIR/gemini_key" "$APPEX/Contents/Resources/gemini_key"
+KEY_FILE=$CONFIG_DIR/api_key
+[[ -s $KEY_FILE ]] || KEY_FILE=$CONFIG_DIR/gemini_key # setups from before api_key
+if [[ -s $KEY_FILE ]]; then
+  cp "$KEY_FILE" "$APPEX/Contents/Resources/api_key"
 else
-  echo "⚠︎ No Gemini key; the question widgets will show setup instructions."
+  echo "⚠︎ No AI API key; the question widgets will show setup instructions."
 fi
 [[ -s $CONFIG_DIR/profile.txt ]] && cp "$CONFIG_DIR/profile.txt" "$APPEX/Contents/Resources/profile.txt"
 

@@ -462,7 +462,7 @@ struct TodayView: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 SectionLabel("System design", symbol: "server.rack", color: Theme.design)
-                Text(CSGenerator.apiKey == nil ? "Add a free Gemini API key: run ./setup.sh again." : "Generating today's question…")
+                Text(CSGenerator.apiKey == nil ? "Add an AI API key: run ./setup.sh again." : "Generating today's question…")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -521,7 +521,7 @@ struct CSView: View {
                 }
                 if qs.isEmpty {
                     Text(CSGenerator.apiKey == nil
-                         ? "Add a free Gemini API key: run ./setup.sh again."
+                         ? "Add an AI API key: run ./setup.sh again."
                          : "Generating today's questions…")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -668,7 +668,7 @@ struct CSWidget: Widget {
             FamilyReader { CSView(entry: entry, family: $0) }
         }
         .configurationDisplayName("CS Fundamentals")
-        .description("Fresh daily OS, Networks, DBMS and Infra questions with hints, written by Gemini.")
+        .description("Fresh daily OS, Networks, DBMS and Infra questions with hints, written by AI.")
         .supportedFamilies([.systemMedium, .systemLarge])
     }
 }

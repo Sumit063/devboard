@@ -8,6 +8,9 @@ enum Config {
         var github_username: String?
         var notes_folder: String?
         var resume_questions: Bool?
+        var ai_provider: String?
+        var ai_model: String?
+        var ai_base_url: String?
     }
 
     private static let file: File = {
@@ -26,6 +29,12 @@ enum Config {
     static var gitHubUser: String? { clean(file.github_username) }
     static var notesFolder: String { clean(file.notes_folder) ?? "Daily Problems" }
     static var resumeQuestions: Bool { file.resume_questions ?? true }
+    /// "gemini" (default), "claude", or "openai" (any OpenAI-compatible Chat Completions API).
+    static var aiProvider: String { clean(file.ai_provider)?.lowercased() ?? "gemini" }
+    /// Overrides the provider's default model(s).
+    static var aiModel: String? { clean(file.ai_model) }
+    /// Base URL for "openai": OpenAI, OpenRouter, Groq, Together, a local Ollama or LM Studio…
+    static var aiBaseURL: String { clean(file.ai_base_url) ?? "https://api.openai.com/v1" }
     static let urlScheme = "devboard"
 
     static var leetCodeProfile: URL {

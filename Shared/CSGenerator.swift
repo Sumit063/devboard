@@ -1,16 +1,17 @@
 import Foundation
 import os
 
-/// Generates the daily OS / CN / DBMS / Infra / system design questions with Google's Gemini API (free tier, one request a day).
+/// Generates the daily OS / CN / DBMS / Infra / system design questions with an LLM (one request a day):
+/// Google Gemini (free tier, the default), Anthropic Claude, or any OpenAI-compatible API, picked by `ai_provider` in config.json.
 /// Only the subtopic is chosen here, so questions don't repeat; the question and hints are written fresh by the model.
-/// The API key is read from `gemini_key` in the widget bundle, which build.sh copies from ~/.config/devboard/gemini_key.
+/// The API key is read from `api_key` in the widget bundle, which build.sh copies from ~/.config/devboard/.
 /// The optional resume profile (`profile.txt`) is copied the same way.
 enum CSGenerator {
     static let log = Logger(subsystem: "dev.devboard", category: "questions")
 
-    /// Tried in order. Thinking is kept low/off so a reload finishes well inside WidgetKit's watchdog limit.
-    static let models: [(name: String, thinking: [String: Any])] = [
-        ("gemini-2.5-flash", ["thinkingBudget": 0]),       // fast (~5s) and reliable
+    /// Gemini models, tried in order. Thinking is kept low/off so a reload finishes well inside WidgetKit's watchdog limit.
+    static let geminiModels: [(name: String, thinking: [String: Any])] = [
+        ("gemini-3.8-flash", ["thinkingLevel": "low"]),    // gemini-2.5-flash is closed to new API keys
         ("gemini-3.5-flash", ["thinkingLevel": "low"]),    // fallback; often overloaded on the free tier
         ("gemini-flash-latest", [:]),
     ]
@@ -94,7 +95,8 @@ enum CSGenerator {
     enum GenError: Error { case noKey, http(Int, String), unparseable(String) }
 
     static var apiKey: String? {
-        guard let url = Bundle.main.url(forResource: "gemini_key", withExtension: nil),
+        guard let url = Bundle.main.url(forResource: "api_key", withExtension: nil)
+                ?? Bundle.main.url(forResource: "gemini_key", withExtension: nil), // builds from before api_key
               let key = try? String(contentsOf: url, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
               !key.isEmpty else { return nil }
         return key
@@ -103,8 +105,8 @@ enum CSGenerator {
     // Per-attempt cap; a slow model falls through to the next, faster one.
     private static let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
-        c.timeoutIntervalForRequest = 20
-        c.timeoutIntervalForResource = 20
+        c.timeoutIntervalForRequest = 60 // gemini-3.8-flash often needs 15-50s on the free tier
+        c.timeoutIntervalForResource = 60
         return URLSession(configuration: c)
     }()
 
@@ -139,29 +141,123 @@ enum CSGenerator {
             prompt += "\n\nCandidate profile (use only for the \(picks[slot].subject) question):\n\(profile)"
         }
 
+        // Each attempt is (label, request). Only Gemini has a fallback chain; the others use one model.
+        let attempts: [(String, () async throws -> String)]
+        switch Config.aiProvider {
+        case "claude", "anthropic":
+            let model = Config.aiModel ?? "claude-opus-5-5"
+            attempts = [(model, { try await callClaude(model: model, key: key, prompt: prompt) })]
+        case "openai":
+            guard let model = Config.aiModel else { throw GenError.unparseable("set ai_model in config.json for ai_provider openai") }
+            attempts = [(model, { try await callOpenAI(model: model, key: key, prompt: prompt) })]
+        default:
+            let models = Config.aiModel.map { [($0, [String: Any]())] } ?? geminiModels
+            attempts = models.map { m in (m.name, { try await callGemini(model: m.name, thinking: m.thinking, key: key, prompt: prompt) }) }
+        }
+
         var lastError: Error = GenError.unparseable("no model tried")
-        for model in models {
+        for (name, attempt) in attempts {
             do {
-                let text = try await call(model: model.name, thinking: model.thinking, key: key, prompt: prompt)
+                let text = try await attempt()
                 let qs = try parse(text, picks: picks, resumeSlot: slot)
-                log.info("generated \(qs.count) questions with \(model.name, privacy: .public)")
+                log.info("generated \(qs.count) questions with \(name, privacy: .public)")
                 return qs
             } catch GenError.http(let code, let body) where code == 400 && !body.contains("not found") {
                 throw GenError.http(code, body) // a bad request won't succeed on another model
             } catch {
                 // Overloaded (503), over quota (429), unavailable (404), timed out or unparseable: try the next model.
-                log.info("model \(model.name, privacy: .public) failed: \(String(describing: error).prefix(160), privacy: .public)")
+                log.info("model \(name, privacy: .public) failed: \(String(describing: error).prefix(160), privacy: .public)")
                 lastError = error
             }
         }
         throw lastError
     }
 
-    private static func call(model: String, thinking: [String: Any], key: String, prompt: String) async throws -> String {
-        var req = URLRequest(url: URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent")!)
+    /// The questions as a JSON array, in the shape `parse` expects.
+    private static let questionsSchema: [String: Any] = [
+        "type": "array",
+        "items": [
+            "type": "object",
+            "properties": [
+                "subject": ["type": "string"],
+                "title": ["type": "string"],
+                "prompt": ["type": "string"],
+                "hints": ["type": "array", "items": ["type": "string"]],
+            ],
+            "required": ["subject", "title", "prompt", "hints"],
+            "additionalProperties": false,
+        ],
+    ]
+
+    private static func post(_ url: String, headers: [String: String], body: [String: Any]) async throws -> [String: Any] {
+        guard let u = URL(string: url) else { throw GenError.unparseable("bad URL \(url)") }
+        var req = URLRequest(url: u)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        headers.forEach { req.setValue($1, forHTTPHeaderField: $0) }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await session.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else { throw GenError.http(status, String(decoding: data.prefix(300), as: UTF8.self)) }
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GenError.unparseable(String(decoding: data.prefix(300), as: UTF8.self))
+        }
+        return obj
+    }
+
+    /// Anthropic Messages API, with structured output so the reply is always the questions JSON.
+    private static func callClaude(model: String, key: String, prompt: String) async throws -> String {
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": 16000,
+            "system": instructions,
+            "messages": [["role": "user", "content": prompt]],
+            // Low effort keeps the reply fast; structured output needs an object at the top level.
+            "output_config": [
+                "effort": "low",
+                "format": ["type": "json_schema", "schema": [
+                    "type": "object",
+                    "properties": ["questions": questionsSchema],
+                    "required": ["questions"],
+                    "additionalProperties": false,
+                ]],
+            ],
+            // If a safety classifier declines, re-run on Anthropic's recommended fallback model instead of failing.
+            "fallbacks": "default",
+        ]
+        let obj = try await post("https://api.anthropic.com/v1/messages", headers: [
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "server-side-fallback-2026-07-01",
+        ], body: body)
+        guard obj["stop_reason"] as? String != "refusal", let content = obj["content"] as? [[String: Any]] else {
+            throw GenError.unparseable("Claude declined or returned no content")
+        }
+        return content.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined()
+    }
+
+    /// Any OpenAI-compatible Chat Completions endpoint (OpenAI, OpenRouter, Groq, Together, Ollama, LM Studio…).
+    private static func callOpenAI(model: String, key: String, prompt: String) async throws -> String {
+        let base = Config.aiBaseURL.hasSuffix("/") ? String(Config.aiBaseURL.dropLast()) : Config.aiBaseURL
+        let body: [String: Any] = [
+            "model": model,
+            "messages": [
+                ["role": "system", "content": instructions],
+                ["role": "user", "content": prompt + "\n\nReply with only a JSON object: {\"questions\": [{\"subject\", \"title\", \"prompt\", \"hints\": [...]}, ...]}"],
+            ],
+            // json_object is the most widely supported JSON mode across compatible servers.
+            "response_format": ["type": "json_object"],
+        ]
+        let obj = try await post(base + "/chat/completions", headers: ["Authorization": "Bearer \(key)"], body: body)
+        guard let choices = obj["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let text = message["content"] as? String else {
+            throw GenError.unparseable(String(describing: obj).prefix(300).description)
+        }
+        return text
+    }
+
+    private static func callGemini(model: String, thinking: [String: Any], key: String, prompt: String) async throws -> String {
         let schema: [String: Any] = [
             "type": "ARRAY",
             "items": [
@@ -181,16 +277,12 @@ enum CSGenerator {
             "generationConfig": ["temperature": 0.8, "responseMimeType": "application/json", "responseSchema": schema]
                 .merging(thinking.isEmpty ? [:] : ["thinkingConfig": thinking]) { a, _ in a },
         ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, resp) = try await session.data(for: req)
-        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else { throw GenError.http(status, String(decoding: data.prefix(300), as: UTF8.self)) }
-        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let candidates = obj["candidates"] as? [[String: Any]],
+        let obj = try await post("https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent",
+                                 headers: ["x-goog-api-key": key], body: body)
+        guard let candidates = obj["candidates"] as? [[String: Any]],
               let content = candidates.first?["content"] as? [String: Any],
               let parts = content["parts"] as? [[String: Any]] else {
-            throw GenError.unparseable(String(decoding: data.prefix(300), as: UTF8.self))
+            throw GenError.unparseable(String(describing: obj).prefix(300).description)
         }
         // Skip any "thought" parts from thinking models.
         return parts.filter { ($0["thought"] as? Bool) != true }.compactMap { $0["text"] as? String }.joined()
