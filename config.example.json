@@ -2,5 +2,8 @@
   "leetcode_username": "your-leetcode-username",
   "github_username": "your-github-username",
   "notes_folder": "Daily Problems",
-  "resume_questions": true
+  "resume_questions": true,
+  "ai_provider": "gemini",
+  "ai_model": "",
+  "ai_base_url": ""
 }

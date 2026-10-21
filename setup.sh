@@ -1,5 +1,5 @@
 #!/bin/zsh
-# DevBoard setup: asks for your usernames, an optional free Gemini key and an optional resume,
+# DevBoard setup: asks for your usernames, an optional AI key (Gemini, Claude or OpenAI-compatible) and an optional resume,
 # saves them to ~/.config/devboard/ (never inside this repo), then builds and installs the widgets.
 # Safe to re-run any time to change settings.
 set -euo pipefail
@@ -47,31 +47,58 @@ PY
 chmod 600 "$CONFIG_DIR/config.json"
 echo
 
-# 3. Gemini key
-bold "2/3  Gemini API key (optional, free)"
+# 3. AI provider + key
+bold "2/3  AI provider (optional)"
 echo "Writes the daily system design, OS, networks, DBMS and infra questions with hints."
-echo "Get a free key (no card): https://aistudio.google.com/apikey"
+echo "  1) Gemini   free tier, no card: https://aistudio.google.com/apikey"
+echo "  2) Claude   https://console.anthropic.com/settings/keys"
+echo "  3) OpenAI-compatible   OpenAI, OpenRouter, Groq, Together, Ollama, LM Studio…"
+def_provider=$(current ai_provider); def_provider=${def_provider:-gemini}; [[ $def_provider == anthropic ]] && def_provider=claude
+case $def_provider in claude) def=2 ;; openai) def=3 ;; *) def=1 ;; esac
+ask "Provider (1/2/3)" "$def"
+case $REPLY in 2*) PROVIDER=claude ;; 3*) PROVIDER=openai ;; *) PROVIDER=gemini ;; esac
+MODEL="" BASE_URL=""
+if [[ $PROVIDER == openai ]]; then
+  ask "API base URL" "$(current ai_base_url || true)"; BASE_URL=${REPLY:-https://api.openai.com/v1}
+  ask "Model name (as your provider lists it)" "$(current ai_model || true)"; MODEL=$REPLY
+elif [[ $PROVIDER == $def_provider ]]; then
+  MODEL=$(current ai_model || true) # keep a model override only while the provider stays the same
+fi
+python3 -I - "$CONFIG_DIR/config.json" "$PROVIDER" "$MODEL" "$BASE_URL" <<'PY'
+import json, sys
+path, provider, model, base = sys.argv[1:]
+cfg = json.load(open(path))
+cfg.update({"ai_provider": provider, "ai_model": model, "ai_base_url": base})
+json.dump(cfg, open(path, "w"), indent=2)
+PY
+# Setups from before api_key stored the key as gemini_key.
+[[ -s $CONFIG_DIR/api_key || ! -s $CONFIG_DIR/gemini_key ]] || mv "$CONFIG_DIR/gemini_key" "$CONFIG_DIR/api_key"
 check_key() {
-  python3 -I - "$CONFIG_DIR/gemini_key" <<'PY'
-import json, sys, urllib.request
+  python3 -I - "$CONFIG_DIR/api_key" "$PROVIDER" "${BASE_URL:-https://api.openai.com/v1}" <<'PY'
+import sys, urllib.request
 key = open(sys.argv[1]).read().strip()
-req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", headers={"x-goog-api-key": key})
+provider, base = sys.argv[2], sys.argv[3].rstrip("/")
+url, headers = {
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", {"x-goog-api-key": key}),
+    "claude": ("https://api.anthropic.com/v1/models?limit=1", {"x-api-key": key, "anthropic-version": "2023-06-01"}),
+    "openai": (base + "/models", {"Authorization": f"Bearer {key}"}),
+}[provider]
 try:
-    urllib.request.urlopen(req, timeout=15)
+    urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=15)
     print("  ✓ Key works")
 except Exception as e:
-    print(f"  ✗ Gemini rejected the key ({e}). Re-run ./setup.sh to try another.")
+    print(f"  ✗ The provider rejected the key ({e}). Re-run ./setup.sh to try another.")
 PY
 }
-if [[ -s $CONFIG_DIR/gemini_key ]]; then
+if [[ -s $CONFIG_DIR/api_key && $PROVIDER == $def_provider ]]; then
   ask "A key is already saved. Replace it? (y/N)" ""; replace=$REPLY
 else
   replace=y
 fi
 if [[ $replace == [yY]* ]]; then
-  read -s "KEY?Paste your key (hidden; Enter to skip): "; echo
+  read -s "KEY?Paste your $PROVIDER API key (hidden; Enter to skip): "; echo
   if [[ -n $KEY ]]; then
-    print -rn -- "$KEY" > "$CONFIG_DIR/gemini_key" && chmod 600 "$CONFIG_DIR/gemini_key"
+    print -rn -- "$KEY" > "$CONFIG_DIR/api_key" && chmod 600 "$CONFIG_DIR/api_key"
     check_key
   fi
 fi
@@ -81,12 +108,12 @@ echo
 bold "3/3  Resume-based questions (optional)"
 echo "Each day one question is asked about your own projects, like an interviewer would."
 echo "Your resume is turned into a short profile with no name, contact details, employers or schools."
-echo "Contact details are removed on your Mac first; the rest is sent once to Gemini to write the profile."
+echo "Contact details are removed on your Mac first; the rest is sent once to your AI provider to write the profile."
 if [[ -s $CONFIG_DIR/profile.txt ]]; then echo "(A profile is already saved at $CONFIG_DIR/profile.txt.)"; fi
 ask "Path to your resume (PDF, DOCX, TXT, MD or TeX; Enter to skip)" ""; RESUME=${REPLY/#\~/$HOME}
 if [[ -n $RESUME ]]; then
-  if [[ ! -s $CONFIG_DIR/gemini_key ]]; then
-    echo "  Skipped: a Gemini key is needed to write the profile. You can also copy"
+  if [[ ! -s $CONFIG_DIR/api_key ]]; then
+    echo "  Skipped: an AI API key is needed to write the profile. You can also copy"
     echo "  profile.example.txt to $CONFIG_DIR/profile.txt and fill it in by hand."
   elif [[ ! -f $RESUME ]]; then
     echo "  Couldn't find $RESUME"
